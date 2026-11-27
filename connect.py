@@ -5,7 +5,7 @@ import shutil
 import subprocess
 
 from playwright.sync_api import sync_playwright
-from vc_editor import EDITOR, TITLE_FIELDS, confirm_blog, launch
+from vc_editor import EDITOR, TITLE_FIELDS, launch
 
 REPO = 'proavitology-droid/telegram-vc-autopost'
 
@@ -13,8 +13,10 @@ REPO = 'proavitology-droid/telegram-vc-autopost'
 def main():
     if not shutil.which('gh'):
         raise SystemExit('Нужен GitHub CLI (gh) и вход в ваш аккаунт GitHub.')
-    subprocess.run(['gh', 'repo', 'view', REPO, '--json', 'nameWithOwner'], check=True,
-                   stdout=subprocess.DEVNULL)
+    login = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], check=True,
+                           capture_output=True, text=True).stdout.strip()
+    if login.lower() != REPO.split('/')[0].lower():
+        raise SystemExit(f'В GitHub CLI нужно войти как {REPO.split("/")[0]}. Сейчас используется {login}.')
     with sync_playwright() as p:
         browser = launch(p.chromium, headed=True)
         context = browser.new_context(locale='ru-RU')
@@ -23,7 +25,6 @@ def main():
         input('Войдите в свой аккаунт на vc.ru в открывшемся окне, затем нажмите Enter здесь. ')
         tab.goto(EDITOR, wait_until='domcontentloaded')
         tab.wait_for_selector(f'{TITLE_FIELDS}, [contenteditable="true"]', timeout=12000)
-        confirm_blog(tab)
         state = context.storage_state()
         cookies = [cookie for cookie in state['cookies']
                    if cookie['domain'].lstrip('.') == 'vc.ru'
