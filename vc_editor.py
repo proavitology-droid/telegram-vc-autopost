@@ -154,7 +154,7 @@ def edit_post(post, storage_state, before_publish=None):
             raise RuntimeError('Редактор vc.ru не показал поля публикации.') from None
         confirm_blog(tab)
 
-        fields = tab.locator('[contenteditable="true"]:visible')
+        fields = tab.locator('[contenteditable]:not([contenteditable="false"]):visible')
         title = tab.locator(TITLE_FIELDS).filter(visible=True)
         body = fields.first
         if title.count() == 0 and fields.count() >= 2:
@@ -165,6 +165,17 @@ def edit_post(post, storage_state, before_publish=None):
         if title.count() != 1:
             raise RuntimeError('Не удалось определить поле заголовка vc.ru.')
         title.fill(post.title)
+        if body.count() == 0:
+            title.press('Enter')
+        if body.count() == 0:
+            structure = tab.locator('[contenteditable], [role="textbox"], textarea, [data-placeholder]').evaluate_all('''
+                elements => elements.slice(0, 25).map(element => ({
+                    tag: element.tagName, editable: element.getAttribute('contenteditable'),
+                    role: element.getAttribute('role'), class: Array.from(element.classList),
+                    visible: Boolean(element.getClientRects().length)
+                }))
+            ''')
+            print(f'Поля редактора: {structure}', flush=True)
         paste_text(context, tab, body, post)
         for photo in reversed(post.photos):
             paste_photo(tab, photo)
