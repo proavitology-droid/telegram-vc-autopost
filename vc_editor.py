@@ -24,6 +24,7 @@ TITLE_FIELDS = (
     '[contenteditable="true"][aria-label*="Заголовок"],'
     'textarea[placeholder*="Заголовок"], input[placeholder*="Заголовок"]'
 )
+EDITABLE_FIELDS = '[contenteditable]:not([contenteditable="false"]):visible'
 
 
 def launch(browser_type, *, headed=False):
@@ -44,6 +45,10 @@ def check_editor():
 
 def compact(text):
     return ' '.join(text.split())
+
+
+def letters_and_digits(text):
+    return ''.join(character for character in text.casefold() if character.isalnum())
 
 
 def article_link(candidate):
@@ -96,10 +101,10 @@ def paste_text(context, tab, target, post):
     target.click()
     tab.keyboard.press('Control+v')
     expect(tab.get_by_text('Оригинал в Telegram', exact=True).first).to_be_visible(timeout=7000)
-    if post.text:
-        excerpt = compact(post.text)[:36].strip()
-        if excerpt and excerpt not in compact(tab.locator('body').inner_text(timeout=3000)):
-            raise RuntimeError('Редактор не показал текст ожидаемой записи.')
+    expected_text = letters_and_digits(post.text)
+    editor_text = letters_and_digits(' '.join(tab.locator(EDITABLE_FIELDS).all_inner_texts()))
+    if expected_text not in editor_text:
+        raise RuntimeError('Редактор не перенёс весь текст ожидаемой записи.')
 
 
 def paste_photo(tab, url):
@@ -154,7 +159,7 @@ def edit_post(post, storage_state, before_publish=None):
             raise RuntimeError('Редактор vc.ru не показал поля публикации.') from None
         confirm_blog(tab)
 
-        fields = tab.locator('[contenteditable]:not([contenteditable="false"]):visible')
+        fields = tab.locator(EDITABLE_FIELDS)
         title = tab.locator(TITLE_FIELDS).filter(visible=True)
         body = fields.first
         if title.count() == 0 and fields.count() >= 2:
@@ -167,15 +172,6 @@ def edit_post(post, storage_state, before_publish=None):
         title.fill(post.title)
         if body.count() == 0:
             title.press('Enter')
-        if body.count() == 0:
-            structure = tab.locator('[contenteditable], [role="textbox"], textarea, [data-placeholder]').evaluate_all('''
-                elements => elements.slice(0, 25).map(element => ({
-                    tag: element.tagName, editable: element.getAttribute('contenteditable'),
-                    role: element.getAttribute('role'), class: Array.from(element.classList),
-                    visible: Boolean(element.getClientRects().length)
-                }))
-            ''')
-            print(f'Поля редактора: {structure}', flush=True)
         paste_text(context, tab, body, post)
         for photo in reversed(post.photos):
             paste_photo(tab, photo)
