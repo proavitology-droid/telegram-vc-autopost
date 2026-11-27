@@ -4,7 +4,7 @@ import base64
 import json
 import os
 import re
-from urllib.parse import parse_qs, urljoin, urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import TimeoutError as BrowserTimeout, expect, sync_playwright
@@ -55,6 +55,20 @@ def article_link(candidate):
     url = urlsplit(urljoin(BASE, candidate))
     if url.scheme == 'https' and url.netloc == 'vc.ru' and ARTICLE_PATH.fullmatch(url.path):
         return BASE + url.path.rstrip('/')
+    return None
+
+
+def draft_link(candidate):
+    address = urlsplit(candidate)
+    if address.scheme != 'https' or address.hostname != 'vc.ru':
+        return None
+    if DRAFT_PATH.fullmatch(address.path):
+        return BASE + address.path
+    query = parse_qs(address.query)
+    draft_id = query.get('id', [''])[0]
+    if address.path == '/' and query.get('modal') == ['editor'] and draft_id.isdecimal():
+        editor_params = {key: query[key][0] for key in ('modal', 'action', 'id') if key in query}
+        return f'{BASE}/?{urlencode(editor_params)}'
     return None
 
 
@@ -149,13 +163,6 @@ def edit_post(post, storage_state, before_publish=None):
         browser = launch(p.chromium)
         context = browser.new_context(storage_state=json.loads(storage_state), locale='ru-RU')
         tab = context.new_page()
-        write_responses = []
-        if before_publish is None:
-            def record_write(response):
-                address = urlsplit(response.url)
-                if address.hostname in {'vc.ru', 'api.vc.ru'} and response.request.method in {'POST', 'PATCH', 'PUT'}:
-                    write_responses.append((response.request.method, address.path, response.status))
-            tab.on('response', record_write)
         tab.set_default_timeout(9000)
         tab.goto(EDITOR, wait_until='domcontentloaded', timeout=16000)
         try:
@@ -185,27 +192,23 @@ def edit_post(post, storage_state, before_publish=None):
         source = tab.get_by_role('link', name='Оригинал в Telegram')
         expect(source.first).to_have_attribute('href', post.source)
 
+        publish = tab.get_by_role('button', name='Опубликовать', exact=True).filter(visible=True)
+        expect(publish).to_have_count(1)
+        expect(publish).to_be_enabled()
         if before_publish is None:
             save_button = tab.get_by_role('button', name=re.compile(r'^Сохранить( черновик)?$', re.I)).filter(visible=True)
             if save_button.count() == 1:
                 save_button.click()
-            try:
-                tab.wait_for_url(lambda url: bool(DRAFT_PATH.fullmatch(urlsplit(url).path)), timeout=15000)
-            except BrowserTimeout:
-                details = urlsplit(tab.url)
-                actions = tab.locator('button, [role="button"], a').evaluate_all('''
-                    controls => controls.filter(element => element.getClientRects().length)
-                        .map(element => [element.innerText, element.title, element.getAttribute('aria-label')])
-                        .flat().filter(label => label && /сохрани|черновик|опубликоват|закрыть/i.test(label))
-                        .map(label => label.trim().slice(0, 80)).slice(0, 12)
-                ''')
-                print(f'Черновик: адрес {details.path}, параметры {list(parse_qs(details.query))}, действия {actions}, ответы {write_responses[-12:]}', flush=True)
-                raise RuntimeError('Редактор не показал адрес сохранённого черновика.') from None
-            return BASE + urlsplit(tab.url).path
+            tab.wait_for_url(lambda url: draft_link(url) is not None, timeout=15000)
+            saved_draft = draft_link(tab.url)
+            # Reopen from the saved address to confirm that the edit survived navigation.
+            tab.goto(saved_draft, wait_until='domcontentloaded')
+            expect(tab.get_by_role('link', name='Оригинал в Telegram').first).to_have_attribute('href', post.source)
+            editor_text = letters_and_digits(' '.join(tab.locator(EDITABLE_FIELDS).all_inner_texts()))
+            if letters_and_digits(post.text) not in editor_text:
+                raise RuntimeError('После открытия черновика текст записи не подтвердился.')
+            return saved_draft
 
-        publish = tab.get_by_role('button', name='Опубликовать', exact=True).filter(visible=True)
-        expect(publish).to_have_count(1)
-        expect(publish).to_be_enabled()
         before_publish()
         publish.click()
         confirmation = tab.get_by_role('dialog').get_by_role('button', name='Опубликовать', exact=True)
