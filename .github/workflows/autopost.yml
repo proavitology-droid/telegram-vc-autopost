@@ -1,0 +1,45 @@
+name: Telegram → vc.ru
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Режим запуска
+        type: choice
+        default: check
+        options:
+          - check
+          - draft
+          - initialize
+          - publish
+  schedule:
+    - cron: '17 * * * *'
+
+concurrency:
+  group: telegram-vc-autopost
+  cancel-in-progress: false
+
+jobs:
+  check-or-publish:
+    # Start scheduled cycles only after checking a draft and setting the initial cursor.
+    if: github.event_name == 'workflow_dispatch' || vars.VC_AUTOPOST_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: main
+      - name: Install dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/vc-env"
+          "$RUNNER_TEMP/vc-env/bin/pip" install -q -r requirements.txt
+      - name: Read Telegram and update the queue
+        env:
+          VC_STORAGE_STATE: ${{ (inputs.mode == 'draft' || inputs.mode == 'publish' || github.event_name == 'schedule') && secrets.VC_STORAGE_STATE || '' }}
+          MODE: ${{ github.event_name == 'schedule' && 'publish' || inputs.mode }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          "$RUNNER_TEMP/vc-env/bin/python" run.py "$MODE"
