@@ -149,6 +149,13 @@ def edit_post(post, storage_state, before_publish=None):
         browser = launch(p.chromium)
         context = browser.new_context(storage_state=json.loads(storage_state), locale='ru-RU')
         tab = context.new_page()
+        write_responses = []
+        if before_publish is None:
+            def record_write(response):
+                address = urlsplit(response.url)
+                if address.hostname in {'vc.ru', 'api.vc.ru'} and response.request.method in {'POST', 'PATCH', 'PUT'}:
+                    write_responses.append((response.request.method, address.path, response.status))
+            tab.on('response', record_write)
         tab.set_default_timeout(9000)
         tab.goto(EDITOR, wait_until='domcontentloaded', timeout=16000)
         try:
@@ -179,7 +186,21 @@ def edit_post(post, storage_state, before_publish=None):
         expect(source.first).to_have_attribute('href', post.source)
 
         if before_publish is None:
-            tab.wait_for_url(lambda url: bool(DRAFT_PATH.fullmatch(urlsplit(url).path)), timeout=10000)
+            save_button = tab.get_by_role('button', name=re.compile(r'^Сохранить( черновик)?$', re.I)).filter(visible=True)
+            if save_button.count() == 1:
+                save_button.click()
+            try:
+                tab.wait_for_url(lambda url: bool(DRAFT_PATH.fullmatch(urlsplit(url).path)), timeout=15000)
+            except BrowserTimeout:
+                details = urlsplit(tab.url)
+                actions = tab.locator('button, [role="button"], a').evaluate_all('''
+                    controls => controls.filter(element => element.getClientRects().length)
+                        .map(element => [element.innerText, element.title, element.getAttribute('aria-label')])
+                        .flat().filter(label => label && /сохрани|черновик|опубликоват|закрыть/i.test(label))
+                        .map(label => label.trim().slice(0, 80)).slice(0, 12)
+                ''')
+                print(f'Черновик: адрес {details.path}, параметры {list(parse_qs(details.query))}, действия {actions}, ответы {write_responses[-12:]}', flush=True)
+                raise RuntimeError('Редактор не показал адрес сохранённого черновика.') from None
             return BASE + urlsplit(tab.url).path
 
         publish = tab.get_by_role('button', name='Опубликовать', exact=True).filter(visible=True)
