@@ -3,11 +3,20 @@
 import json
 import shutil
 import subprocess
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
-from vc_editor import EDITOR, TITLE_FIELDS, launch
+from vc_editor import BASE, launch
 
 REPO = 'proavitology-droid/telegram-vc-autopost'
+
+
+def is_signed_in(tab):
+    response = tab.goto(f'{BASE}/settings', wait_until='domcontentloaded')
+    address = urlsplit(tab.url)
+    return (response is not None and response.ok and address.hostname == 'vc.ru'
+            and (address.path == '/settings' or address.path.startswith('/settings/'))
+            and 'auth' not in parse_qs(address.query).get('modal', ()))
 
 
 def main():
@@ -21,18 +30,26 @@ def main():
         browser = launch(p.chromium, headed=True)
         context = browser.new_context(locale='ru-RU')
         tab = context.new_page()
-        tab.goto('https://vc.ru/', wait_until='domcontentloaded')
-        input('Войдите в свой аккаунт на vc.ru в открывшемся окне, затем нажмите Enter здесь. ')
-        tab.goto(EDITOR, wait_until='domcontentloaded')
-        tab.wait_for_selector(f'{TITLE_FIELDS}, [contenteditable="true"]', timeout=12000)
+        tab.goto(BASE, wait_until='domcontentloaded')
+        while True:
+            input('Дождитесь, пока на vc.ru появится ваш профиль, затем нажмите Enter здесь. ')
+            if is_signed_in(tab):
+                break
+            print('Вход в vc.ru ещё не подтверждён. Завершите вход в открытом окне.')
+            tab.bring_to_front()
         state = context.storage_state()
         cookies = [cookie for cookie in state['cookies']
                    if cookie['domain'].lstrip('.') == 'vc.ru'
                    or cookie['domain'].lstrip('.').endswith('.vc.ru')]
-        origins = [origin for origin in state['origins'] if origin['origin'] == 'https://vc.ru']
+        origins = [origin for origin in state['origins'] if origin['origin'] == BASE]
         if not cookies:
             raise SystemExit('Сессия vc.ru не найдена.')
-        secret = json.dumps({'cookies': cookies, 'origins': origins}, ensure_ascii=False)
+        session = {'cookies': cookies, 'origins': origins}
+        verification = browser.new_context(locale='ru-RU', storage_state=session)
+        if not is_signed_in(verification.new_page()):
+            raise SystemExit('Сессия vc.ru не открылась при повторной проверке.')
+        verification.close()
+        secret = json.dumps(session, ensure_ascii=False)
         subprocess.run(['gh', 'secret', 'set', 'VC_STORAGE_STATE', '--repo', REPO],
                        input=secret.encode(), check=True)
     print('Сессия добавлена в секрет GitHub Actions.')
