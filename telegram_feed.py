@@ -3,6 +3,7 @@
 import html
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
@@ -24,6 +25,7 @@ class Post:
     markup: str
     photos: tuple[str, ...]
     needs_review: bool
+    published_at: datetime | None = None
 
     @property
     def source(self):
@@ -44,6 +46,8 @@ def parse_page(raw_html):
     posts = []
     for message in soup.select(f'.tgme_widget_message[data-post^="{CHANNEL}/"]'):
         post_id = int(message['data-post'].rsplit('/', 1)[1])
+        date = message.select_one('.tgme_widget_message_date time[datetime]')
+        published_at = datetime.fromisoformat(date['datetime'].replace('Z', '+00:00')) if date else None
         content = message.select_one('.tgme_widget_message_text')
         cleaned = BeautifulSoup(content.decode_contents() if content else '', 'html.parser')
         for element in cleaned.find_all(['script', 'style', 'iframe', 'object']):
@@ -76,7 +80,7 @@ def parse_page(raw_html):
         source = f'{POST_ROOT}{post_id}'
         markup = f'<p>{text_markup}</p><p><a href="{html.escape(source)}">Оригинал в Telegram</a></p>'
         posts.append(Post(post_id, title or 'Публикация из Telegram', body, markup,
-                          tuple(dict.fromkeys(photos)), needs_review or not (body or photos)))
+                          tuple(dict.fromkeys(photos)), needs_review or not (body or photos), published_at))
     return sorted(posts, key=lambda post: post.id)
 
 

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from telegram_feed import page, since
@@ -55,6 +56,10 @@ def run(mode):
     else:
         if state is None:
             raise RuntimeError('Сначала установите точку начала запуском initialize.')
+        publish_from = datetime.fromisoformat(state['publish_from']) if state.get('publish_from') else None
+        if publish_from and datetime.now(timezone.utc) < publish_from:
+            print(f'Публикация начнётся с {publish_from.isoformat()}.')
+            return
         pending = state['pending']
         if pending:
             from vc_editor import find_publication
@@ -64,6 +69,18 @@ def run(mode):
             record_publication(state, pending['id'], url)
             return
         posts = since(state['cursor'])
+        if publish_from:
+            cursor = state['cursor']
+            for post in posts:
+                if post.published_at is None or post.published_at.utcoffset() is None:
+                    raise RuntimeError(f'Не удалось проверить дату записи Telegram #{post.id}.')
+                if post.published_at >= publish_from:
+                    break
+                cursor = post.id
+            if cursor != state['cursor']:
+                state['cursor'] = cursor
+                save_state(state)
+                posts = [post for post in posts if post.id > cursor]
         if not posts:
             print('Новых записей нет.')
             return
