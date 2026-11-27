@@ -32,6 +32,16 @@ def launch(browser_type, *, headed=False):
     return browser_type.launch(headless=not headed, **options)
 
 
+def check_editor():
+    with sync_playwright() as p:
+        browser = launch(p.chromium)
+        tab = browser.new_page(locale='ru-RU')
+        response = tab.goto(EDITOR, wait_until='domcontentloaded', timeout=16000)
+        if response is None or not response.ok or urlsplit(tab.url).hostname != 'vc.ru':
+            raise RuntimeError('Chrome не смог открыть редактор vc.ru.')
+        print('vc.ru: Chrome открыл страницу редактора.')
+
+
 def compact(text):
     return ' '.join(text.split())
 

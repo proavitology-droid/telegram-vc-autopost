@@ -37,11 +37,8 @@ def run(mode):
     if mode == 'check':
         posts = page()
         print(f'Telegram: {len(posts)} записей доступны, последняя #{posts[-1].id}.')
-        from telegram_feed import download
-        content_type, _ = download('https://vc.ru/editor', limit=8_000_000)
-        if content_type != 'text/html':
-            raise RuntimeError('vc.ru вернул неожиданный ответ.')
-        print('vc.ru: адрес веб-редактора возвращает HTML.')
+        from vc_editor import check_editor
+        check_editor()
         return
     if mode == 'initialize':
         if state is not None:
